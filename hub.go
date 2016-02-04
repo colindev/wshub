@@ -3,81 +3,86 @@ package wshub
 import (
 	"log"
 	"net/http"
-	"sync"
 
 	"golang.org/x/net/websocket"
 )
 
-type Receiver func(*Client, string)
+type Validator func(*http.Request) error
+type ConnectedObserver func(*Client)
+type MessageObserver func(*Client, string)
+type ClosedObserver func(*Client)
 
-type Hub interface {
-	Kick(*Client)
-	Send(*Client, string)
-	Each(func(*Client))
-	Shutdown()
-	HandleReceive(Receiver)
-}
-
-type hub struct {
+type Hub struct {
 	*log.Logger
-	*sync.Mutex
 	online   bool
 	list     map[*Client]bool
 	add      chan *Client
 	del      chan *Client
 	shutdown chan bool
-	receiver Receiver
+	Validator
+	ConnectedObserver
+	MessageObserver
+	ClosedObserver
 }
 
-func (h *hub) run() {
+func (h *Hub) run() {
 	for {
 		select {
 		case c := <-h.del:
+			h.Println("try delete list[c]...")
 			delete(h.list, c)
-			c.quiteW <- true
 
 		case c := <-h.add:
+			h.Println("try set list[c] = true...")
 			h.list[c] = true
 
 		case <-h.shutdown:
 			h.Println("try shutdown...")
 			h.online = false
 			for c := range h.list {
-				delete(h.list, c)
-				c.quiteW <- true
+				go func(cc *Client) {
+					cc.quite <- true
+				}(c)
 			}
 		}
 	}
 }
 
-func (h *hub) Kick(c *Client) {
+func (h *Hub) Kick(c *Client) {
 	h.del <- c
 }
 
-func (h *hub) HandleReceive(r Receiver) {
-	h.receiver = r
-}
-
-func (h *hub) Each(f func(*Client)) {
+func (h *Hub) Each(f func(*Client)) {
 	for c := range h.list {
 		f(c)
 	}
 }
 
-func (h *hub) Send(c *Client, m string) {
+func (h *Hub) Count() int {
+	return len(h.list)
+}
+
+func (h *Hub) Send(c *Client, m string) {
 	c.msg <- m
 }
 
-func (h *hub) Shutdown() {
+func (h *Hub) Broadcast(m string, f func(*Client, string) (string, error)) {
+	h.Each(func(c *Client) {
+		if mm, err := f(c, m); err == nil && mm != "" {
+			h.Send(c, mm)
+		}
+	})
+}
+
+func (h *Hub) Shutdown() {
 	h.shutdown <- true
 }
 
-func Handler(f func(Hub), l *log.Logger) http.Handler {
+func Handler(f func(*Hub), l *log.Logger) http.Handler {
 
-	// 裝飾模式, 調用 x/net/websocketi.Handler 取得 http.Handler
-	h := &hub{
+	// 裝飾模式, 調用 x/net/websocket.Handler 取得 http.Handler
+	h := &Hub{
 		Logger:   l,
-		Mutex:    &sync.Mutex{},
 		online:   true,
 		list:     make(map[*Client]bool),
 		add:      make(chan *Client),
@@ -95,17 +100,35 @@ func Handler(f func(Hub), l *log.Logger) http.Handler {
 		if !h.online {
 			return
 		}
+
+		if h.Validator != nil {
+			h.Println("fire Validator...")
+			if err := h.Validator(conn.Request()); err != nil {
+				return
+			}
+		}
+
 		c := newClient(h, conn)
 		h.add <- c
-		h.Println("h.add <- c")
+
 		go c.write()
-		h.Println("go c.write()")
-		h.Println("c.read()")
+		if h.ConnectedObserver != nil {
+			h.Println("fire ConnectedObserver...")
+			h.ConnectedObserver(c)
+		}
+
 		c.read(func(s string) {
-			if h.receiver != nil {
-				h.receiver(c, s)
+			if h.MessageObserver != nil {
+				h.MessageObserver(c, s)
 			}
 		})
-		h.Println("connection end")
+		h.del <- c
+
+		if h.ClosedObserver != nil {
+			h.Println("fire closedObserver...")
+			h.ClosedObserver(c)
+		}
+
+		h.Printf("quite websocket handler: %+v\n", c)
 	})
 }

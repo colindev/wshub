@@ -67,9 +67,9 @@ func (h *Hub) Count() int {
 	return len(h.list)
 }
 
-func (h *Hub) Send(c *Client, m string) {
+func (h *Hub) Send(c *Client, data interface{}) {
 	select {
-	case c.msg <- m:
+	case c.msg <- data:
 	default:
 		h.Println("channel c.msg closed")
 	}
@@ -110,8 +110,8 @@ func Handler(f func(*Hub), l *log.Logger) http.Handler {
 
 	return websocket.Handler(func(conn *websocket.Conn) {
 		h.Println("new ws connection")
-		defer conn.Close()
 		defer h.Printf("quite websocket handler")
+		defer conn.Close()
 		if !h.online {
 			return
 		}
@@ -120,11 +120,11 @@ func Handler(f func(*Hub), l *log.Logger) http.Handler {
 		c := newClient(h, conn)
 		// 必須啟動 sender 才能真正調用 Send 方法
 		// 否則會堵住
-		go c.senderRun(func(s string) (string, error) {
+		go c.senderRun(func(data interface{}) (interface{}, error) {
 			if !verified {
 				return "", fmt.Errorf("unverified")
 			}
-			return s, nil
+			return data, nil
 		})
 
 		if h.Validator != nil {

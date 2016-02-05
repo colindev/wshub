@@ -11,7 +11,7 @@ type Client struct {
 	hub   *Hub
 	conn  *websocket.Conn
 	quite chan string
-	msg   chan string
+	msg   chan interface{}
 }
 
 func (c *Client) Request() *http.Request {
@@ -23,7 +23,7 @@ func newClient(h *Hub, conn *websocket.Conn) *Client {
 		hub:   h,
 		conn:  conn,
 		quite: make(chan string),
-		msg:   make(chan string),
+		msg:   make(chan interface{}),
 	}
 }
 
@@ -56,7 +56,7 @@ func (c *Client) receiverRun(f func(string)) {
 	}
 }
 
-func (c *Client) senderRun(f func(string) (string, error)) {
+func (c *Client) senderRun(f func(interface{}) (interface{}, error)) {
 	defer c.hub.Println("quite sender")
 	for {
 		select {
@@ -66,11 +66,18 @@ func (c *Client) senderRun(f func(string) (string, error)) {
 				return
 			}
 			m, e := f(m)
-			if m == "" || e != nil {
+			if m == nil || e != nil {
 				continue
 			}
-			if err := websocket.Message.Send(c.conn, m); err != nil {
-				c.hub.Println("send error:", err)
+			switch m.(type) {
+			case string:
+				if err := websocket.Message.Send(c.conn, m); err != nil {
+					c.hub.Println("send string error:", err)
+				}
+			default:
+				if err := websocket.JSON.Send(c.conn, m); err != nil {
+					c.hub.Println("send json error:", err)
+				}
 			}
 		case <-c.quite:
 			c.Quite("sender try quite receiver")

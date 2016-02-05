@@ -28,11 +28,9 @@ func (clt *collector) Push(id string, c *wshub.Client) {
 	}
 }
 
-func (clt *collector) SetInfo(r *http.Request, info map[string]interface{}) {
-
-}
-
 func (clt *collector) Find(id string) (map[*wshub.Client]bool, bool) {
+	clt.Lock()
+	defer clt.Unlock()
 	m, ok := clt.list[id]
 	return m, ok
 }

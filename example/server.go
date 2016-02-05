@@ -86,14 +86,20 @@ func main() {
 		h.ConnectedObserver = func(c *wshub.Client) {
 			fmt.Printf("ConnectedObserver: %+v\n", c)
 			clt.Push(c.Request().URL.Query().Get("id"), c)
-			h.Send(c, fmt.Sprintf("conns: %d", h.Count()))
+			h.Send(c, &struct {
+				Clients int `json:"clients"`
+			}{h.Count()})
 		}
 		h.MessageObserver = func(c *wshub.Client, v string) {
 			fmt.Printf("MessageObserver: %+v --> %s\n", c, v)
 
+			reply := &struct {
+				Clients []string `json:"clients"`
+			}{}
 			h.Each(func(x *wshub.Client) {
-				h.Send(c, fmt.Sprintf("%+v", x))
+				reply.Clients = append(reply.Clients, fmt.Sprintf("%p", x))
 			})
+			h.Send(c, reply)
 		}
 		h.ClosedObserver = func(c *wshub.Client) {
 			fmt.Printf("ClosedObserver: %+v\n", c)

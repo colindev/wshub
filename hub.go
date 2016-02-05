@@ -1,16 +1,18 @@
 package wshub
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 
 	"golang.org/x/net/websocket"
 )
 
-type Validator func(*http.Request) error
+type Validator func(*Client) error
 type ConnectedObserver func(*Client)
 type MessageObserver func(*Client, string)
 type ClosedObserver func(*Client)
+type ShutdownObserver func(*Hub)
 
 type Hub struct {
 	*log.Logger
@@ -23,9 +25,11 @@ type Hub struct {
 	ConnectedObserver
 	MessageObserver
 	ClosedObserver
+	ShutdownObserver
 }
 
 func (h *Hub) run() {
+	defer h.ShutdownObserver(h)
 	for {
 		select {
 		case c := <-h.del:
@@ -41,9 +45,10 @@ func (h *Hub) run() {
 			h.online = false
 			for c := range h.list {
 				go func(cc *Client) {
-					cc.quite <- true
+					cc.Quite("hub shutdown")
 				}(c)
 			}
+			return
 		}
 	}
 }
@@ -63,7 +68,11 @@ func (h *Hub) Count() int {
 }
 
 func (h *Hub) Send(c *Client, m string) {
-	c.msg <- m
+	select {
+	case c.msg <- m:
+	default:
+		h.Println("channel c.msg closed")
+	}
 }
 
 func (h *Hub) Broadcast(m string, f func(*Client, string) (string, error)) {
@@ -78,16 +87,21 @@ func (h *Hub) Shutdown() {
 	h.shutdown <- true
 }
 
+func defaultShutdownHandler(h *Hub) {
+	h.Println("Hub quite running...")
+}
+
 func Handler(f func(*Hub), l *log.Logger) http.Handler {
 
 	// 裝飾模式, 調用 x/net/websocket.Handler 取得 http.Handler
 	h := &Hub{
-		Logger:   l,
-		online:   true,
-		list:     make(map[*Client]bool),
-		add:      make(chan *Client),
-		del:      make(chan *Client),
-		shutdown: make(chan bool),
+		Logger:           l,
+		online:           true,
+		list:             make(map[*Client]bool),
+		add:              make(chan *Client),
+		del:              make(chan *Client),
+		shutdown:         make(chan bool),
+		ShutdownObserver: defaultShutdownHandler,
 	}
 
 	go h.run()
@@ -95,33 +109,49 @@ func Handler(f func(*Hub), l *log.Logger) http.Handler {
 	f(h)
 
 	return websocket.Handler(func(conn *websocket.Conn) {
-		h.Println("new Client")
+		h.Println("new ws connection")
 		defer conn.Close()
+		defer h.Printf("quite websocket handler")
 		if !h.online {
 			return
 		}
 
+		var verified bool = false
+		c := newClient(h, conn)
+		// 必須啟動 sender 才能真正調用 Send 方法
+		// 否則會堵住
+		go c.senderRun(func(s string) (string, error) {
+			if !verified {
+				return "", fmt.Errorf("unverified")
+			}
+			return s, nil
+		})
+
 		if h.Validator != nil {
 			h.Println("fire Validator...")
-			if err := h.Validator(conn.Request()); err != nil {
+			if err := h.Validator(c); err != nil {
+				h.Println("verified fail")
+				c.Quite("verified fail")
+				h.Println("send quite signal to client")
 				return
 			}
+			h.Println("verified success")
+			verified = true
 		}
 
-		c := newClient(h, conn)
 		h.add <- c
 
-		go c.write()
 		if h.ConnectedObserver != nil {
 			h.Println("fire ConnectedObserver...")
 			h.ConnectedObserver(c)
 		}
 
-		c.read(func(s string) {
+		c.receiverRun(func(s string) {
 			if h.MessageObserver != nil {
 				h.MessageObserver(c, s)
 			}
 		})
+
 		h.del <- c
 
 		if h.ClosedObserver != nil {
@@ -129,6 +159,5 @@ func Handler(f func(*Hub), l *log.Logger) http.Handler {
 			h.ClosedObserver(c)
 		}
 
-		h.Printf("quite websocket handler: %+v\n", c)
 	})
 }

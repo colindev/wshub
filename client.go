@@ -10,7 +10,7 @@ import (
 type Client struct {
 	hub   *Hub
 	conn  *websocket.Conn
-	quite chan bool
+	quite chan string
 	msg   chan string
 }
 
@@ -22,18 +22,18 @@ func newClient(h *Hub, conn *websocket.Conn) *Client {
 	return &Client{
 		hub:   h,
 		conn:  conn,
-		quite: make(chan bool),
+		quite: make(chan string),
 		msg:   make(chan string),
 	}
 }
 
-func (c *Client) read(f func(string)) {
-	defer c.hub.Println("quite read", c)
+func (c *Client) receiverRun(f func(string)) {
+	defer c.hub.Println("quite receiver", c)
 	for {
 		select {
 		case <-c.quite:
-			c.hub.Println("reader try quite writer")
-			c.quite <- true
+			c.hub.Println("receiver try quite sender")
+			c.Quite("receiver try quite sender")
 			return
 		default:
 			c.hub.Println("reader wait receive...")
@@ -43,7 +43,7 @@ func (c *Client) read(f func(string)) {
 			if err == io.EOF {
 				// 客端關閉連線
 				c.hub.Println("client close conn")
-				c.quite <- true
+				c.Quite("client closed")
 				return
 			} else if err != nil {
 				// 解析有錯
@@ -56,22 +56,34 @@ func (c *Client) read(f func(string)) {
 	}
 }
 
-func (c *Client) write() {
-	defer c.hub.Println("quite write", c)
+func (c *Client) senderRun(f func(string) (string, error)) {
+	defer c.hub.Println("quite sender")
 	for {
 		select {
 		case m, ok := <-c.msg:
 			if !ok {
-				c.hub.Println("c.msg closed?")
-				c.quite <- true
+				c.Quite("msg closed")
 				return
+			}
+			m, e := f(m)
+			if m == "" || e != nil {
+				continue
 			}
 			if err := websocket.Message.Send(c.conn, m); err != nil {
 				c.hub.Println("send error:", err)
 			}
 		case <-c.quite:
-			c.quite <- true
+			c.Quite("sender try quite receiver")
 			return
 		}
+	}
+}
+
+func (c *Client) Quite(s string) {
+	c.hub.Printf("\033[31mquite <- [ %s ]\033[m\n", s)
+	defer c.hub.Printf("\033[32mquite <- [ %s ] done\033[m\n", s)
+	select {
+	case c.quite <- s:
+	default:
 	}
 }

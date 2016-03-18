@@ -19,12 +19,14 @@ func (c *Client) Request() *http.Request {
 }
 
 func newClient(h *Hub, conn *websocket.Conn) *Client {
-	return &Client{
+	c := &Client{
 		hub:   h,
 		conn:  conn,
 		quite: make(chan string),
-		msg:   make(chan interface{}),
+		msg:   make(chan interface{}, 1),
 	}
+	c.msg <- nil
+	return c
 }
 
 func (c *Client) receiverRun(f func(string)) {
@@ -70,7 +72,7 @@ func (c *Client) senderRun(f func(interface{}) (interface{}, error)) {
 				continue
 			}
 			switch m.(type) {
-			case string:
+			case string, []byte:
 				if err := websocket.Message.Send(c.conn, m); err != nil {
 					c.hub.Println("send string error:", err)
 				}

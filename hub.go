@@ -49,6 +49,8 @@ func (h *Hub) run() {
 				}(c)
 			}
 			return
+
+		default:
 		}
 	}
 }

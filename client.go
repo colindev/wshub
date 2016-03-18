@@ -7,6 +7,16 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+func init() {
+	defaultMarshal := websocket.Message.Marshal
+	websocket.Message.Marshal = func(v interface{}) (msg []byte, payloadType byte, err error) {
+		if data, ok := v.([]byte); ok && len(data) == 0 {
+			return nil, websocket.PingFrame, nil
+		}
+		return defaultMarshal(v)
+	}
+}
+
 type Client struct {
 	hub   *Hub
 	conn  *websocket.Conn
@@ -25,7 +35,7 @@ func newClient(h *Hub, conn *websocket.Conn) *Client {
 		quite: make(chan string),
 		msg:   make(chan interface{}, 1),
 	}
-	c.msg <- nil
+	c.msg <- ([]byte)(nil)
 	return c
 }
 
@@ -81,9 +91,12 @@ func (c *Client) senderRun(f func(interface{}) (interface{}, error)) {
 					c.hub.Println("send json error:", err)
 				}
 			}
+
 		case <-c.quite:
 			c.Quite("sender try quite receiver")
 			return
+
+		default:
 		}
 	}
 }

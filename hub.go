@@ -35,6 +35,7 @@ func (h *Hub) run() {
 		case c := <-h.del:
 			h.Println("try delete list[c]...")
 			delete(h.list, c)
+			c.Quite("del chan receive [c]")
 
 		case c := <-h.add:
 			h.Println("try set list[c] = true...")

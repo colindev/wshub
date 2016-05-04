@@ -1,3 +1,9 @@
+/*
+這是測試doc用的
+	func main(){
+
+	}
+*/
 package wshub
 
 import (

@@ -1,3 +1,7 @@
+/*
+這是 client
+	...
+*/
 package wshub
 
 import (
@@ -17,6 +21,7 @@ func init() {
 	}
 }
 
+// struct 註解
 type Client struct {
 	hub   *Hub
 	conn  *websocket.Conn
@@ -33,7 +38,7 @@ func newClient(h *Hub, conn *websocket.Conn) *Client {
 		hub:   h,
 		conn:  conn,
 		quite: make(chan string),
-		msg:   make(chan interface{}, 1),
+		msg:   make(chan interface{}, 10),
 	}
 	c.msg <- ([]byte)(nil)
 	return c

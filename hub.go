@@ -138,7 +138,8 @@ func (h *Hub) Handler(connHandler func(*websocket.Conn)) http.Handler {
 			return
 		}
 
-		var verified bool = false
+		// NOTE: 預設如果沒嵌入驗證方法就當允許連線
+		var verified bool = true
 		c := newClient(h, conn)
 		// 必須啟動 sender 才能真正調用 Send 方法
 		// 否則會堵住

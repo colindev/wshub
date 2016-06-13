@@ -63,7 +63,11 @@ func (clt *collector) Kick(id string) {
 func main() {
 
 	hub := wshub.New(log.New(os.Stdout, "wshub:", log.Lshortfile))
-	go hub.Run()
+
+	hub.MessageObserver = func(c *wshub.Client, msg string) {
+		fmt.Println(">>", c, msg)
+		hub.Send(c, "echo:"+msg)
+	}
 
 	http.Handle("/ws", hub.Handler(func(conn *websocket.Conn) {
 
@@ -86,5 +90,6 @@ func main() {
 		`))
 	})
 
+	go hub.Run()
 	http.ListenAndServe(":8000", nil)
 }

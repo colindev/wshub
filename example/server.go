@@ -7,7 +7,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/colin1124x/wshub"
+	"golang.org/x/net/websocket"
+
+	"github.com/colindev/wshub"
 )
 
 type collector struct {
@@ -59,53 +61,15 @@ func (clt *collector) Kick(id string) {
 }
 
 func main() {
-	http.Handle("/ws", wshub.Handler(func(h *wshub.Hub) {
 
-		clt := &collector{
-			Mutex: &sync.Mutex{},
-			list:  make(map[string]map[*wshub.Client]bool),
-			info:  make(map[*wshub.Client]map[string]interface{}),
-		}
+	hub := wshub.New(log.New(os.Stdout, "wshub:", log.Lshortfile))
+	go hub.Run()
 
-		h.Validator = func(c *wshub.Client) error {
-			query := c.Request().URL.Query()
-			token := query.Get("token")
+	http.Handle("/ws", hub.Handler(func(conn *websocket.Conn) {
 
-			fmt.Println(token)
+		fmt.Println(conn)
 
-			//return fmt.Errorf("x")
-			return nil
-			//	switch token {
-			//	case "a":
-
-			//		return nil
-			//	default:
-			//		return fmt.Errorf("error")
-			//	}
-		}
-		h.ConnectedObserver = func(c *wshub.Client) {
-			fmt.Printf("ConnectedObserver: %+v\n", c)
-			clt.Push(c.Request().URL.Query().Get("id"), c)
-			h.Send(c, &struct {
-				Clients int `json:"clients"`
-			}{h.Count()})
-		}
-		h.MessageObserver = func(c *wshub.Client, v string) {
-			fmt.Printf("MessageObserver: %+v --> %s\n", c, v)
-
-			reply := &struct {
-				Clients []string `json:"clients"`
-			}{}
-			h.Each(func(x *wshub.Client) {
-				reply.Clients = append(reply.Clients, fmt.Sprintf("%p", x))
-			})
-			h.Send(c, reply)
-		}
-		h.ClosedObserver = func(c *wshub.Client) {
-			fmt.Printf("ClosedObserver: %+v\n", c)
-		}
-
-	}, log.New(os.Stderr, "", log.Lshortfile)))
+	}))
 
 	http.HandleFunc("/client", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`

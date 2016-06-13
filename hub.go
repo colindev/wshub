@@ -1,15 +1,10 @@
-/*
-這是測試doc用的
-	func main(){
-
-	}
-*/
 package wshub
 
 import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 
 	"golang.org/x/net/websocket"
 )
@@ -20,9 +15,14 @@ type MessageObserver func(*Client, string)
 type ClosedObserver func(*Client)
 type ShutdownObserver func(*Hub)
 
+var defaultShutdownHandler ShutdownObserver = func(h *Hub) {
+	h.Println("Hub quite running...")
+}
+
 type Hub struct {
+	*sync.RWMutex
 	*log.Logger
-	online   bool
+	running  bool
 	list     map[*Client]bool
 	add      chan *Client
 	del      chan *Client
@@ -34,7 +34,33 @@ type Hub struct {
 	ShutdownObserver
 }
 
-func (h *Hub) run() {
+func New(l *log.Logger) *Hub {
+	return &Hub{
+		RWMutex:          &sync.RWMutex{},
+		Logger:           l,
+		list:             make(map[*Client]bool),
+		add:              make(chan *Client),
+		del:              make(chan *Client),
+		shutdown:         make(chan bool),
+		ShutdownObserver: defaultShutdownHandler,
+	}
+}
+
+func (h *Hub) IsRunning() bool {
+	h.RLock()
+	defer h.RUnlock()
+
+	return h.running
+}
+
+func (h *Hub) Run() {
+	if h.IsRunning() {
+		panic("already running")
+	}
+	h.Lock()
+	h.running = true
+	h.Unlock()
+
 	defer h.ShutdownObserver(h)
 	for {
 		select {
@@ -49,7 +75,9 @@ func (h *Hub) run() {
 
 		case <-h.shutdown:
 			h.Println("try shutdown...")
-			h.online = false
+			h.Lock()
+			h.running = false
+			h.Unlock()
 			for c := range h.list {
 				go func(cc *Client) {
 					cc.Quite("hub shutdown")
@@ -96,32 +124,17 @@ func (h *Hub) Shutdown() {
 	h.shutdown <- true
 }
 
-func defaultShutdownHandler(h *Hub) {
-	h.Println("Hub quite running...")
-}
-
-func Handler(f func(*Hub), l *log.Logger) http.Handler {
-
-	// 裝飾模式, 調用 x/net/websocket.Handler 取得 http.Handler
-	h := &Hub{
-		Logger:           l,
-		online:           true,
-		list:             make(map[*Client]bool),
-		add:              make(chan *Client),
-		del:              make(chan *Client),
-		shutdown:         make(chan bool),
-		ShutdownObserver: defaultShutdownHandler,
-	}
-
-	go h.run()
-	h.Println("init hub")
-	f(h)
+func (h *Hub) Handler(connHandler func(*websocket.Conn)) http.Handler {
 
 	return websocket.Handler(func(conn *websocket.Conn) {
+
+		connHandler(conn)
+
 		h.Println("new ws connection")
 		defer h.Printf("quite websocket handler")
 		defer conn.Close()
-		if !h.online {
+
+		if !h.IsRunning() {
 			return
 		}
 

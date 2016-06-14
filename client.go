@@ -44,7 +44,7 @@ func newClient(h *Hub, conn *websocket.Conn) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) receiverRun(f func(string)) {
+func (c *Client) receiverRun(handler func(string)) {
 	for {
 		select {
 		case <-c.quite:
@@ -53,18 +53,25 @@ func (c *Client) receiverRun(f func(string)) {
 		default:
 			var s string
 			err := websocket.Message.Receive(c.conn, &s)
-			if err == io.EOF {
-				// 客端關閉連線
-				c.Quite("client closed")
+			if !c.resolveInCome(s, err, handler, c.hub.ErrorObserver) {
 				return
-			} else if err != nil {
-				// 解析有錯
-				c.hub.ErrorObserver(fmt.Errorf("wshub client: %s", err))
-			} else {
-				f(s)
 			}
 		}
 	}
+}
+
+func (c *Client) resolveInCome(s string, e error, accept func(string), reject func(error)) (keepOn bool) {
+	if e == io.EOF {
+		// 客端關閉連線
+		c.Quite("client closed")
+		return false
+	} else if e != nil {
+		// 解析有錯
+		reject(fmt.Errorf("wshub client: %s", e))
+	} else {
+		accept(s)
+	}
+	return true
 }
 
 func (c *Client) senderRun(f func(interface{}) (interface{}, error)) {

@@ -113,10 +113,17 @@ func (h *Hub) Count() int {
 	return len(h.list)
 }
 
-func (h *Hub) Broadcast(m string, f func(*Client, string) (string, error)) int {
+func (h *Hub) Broadcast(m interface{}, f func(*Client, interface{}) (interface{}, error)) int {
 	var n int
+
+	if f == nil {
+		f = func(c *Client, v interface{}) (interface{}, error) {
+			return v, nil
+		}
+	}
+
 	h.Each(func(c *Client) {
-		if mm, err := f(c, m); err == nil && mm != "" {
+		if mm, err := f(c, m); err == nil {
 			if e := c.Send(mm); e == nil {
 				n++
 			} else {

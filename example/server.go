@@ -1,63 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"sync"
 
 	"golang.org/x/net/websocket"
 
 	"github.com/colindev/wshub"
 )
 
-type collector struct {
-	*sync.Mutex
-	hub  *wshub.Hub
-	list map[string]map[*wshub.Client]bool
-	info map[*wshub.Client]map[string]interface{}
-}
-
-func (clt *collector) Push(id string, c *wshub.Client) {
-	clt.Lock()
-	defer clt.Unlock()
-
-	if m, ok := clt.list[id]; ok {
-		m[c] = true
-	} else {
-		clt.list[id] = map[*wshub.Client]bool{c: true}
-	}
-}
-
-func (clt *collector) Find(id string) (map[*wshub.Client]bool, bool) {
-	clt.Lock()
-	defer clt.Unlock()
-	m, ok := clt.list[id]
-	return m, ok
-}
-
-func (clt *collector) Del(c *wshub.Client) {
-	clt.Lock()
-	defer clt.Unlock()
-	if m, ok := clt.info[c]; ok {
-		delete(clt.info, c)
-		if id, ok := m["id"]; ok {
-			delete(clt.list, id.(string))
-		}
-	}
-}
-
-func (clt *collector) Kick(id string) {
-	clt.Lock()
-	defer clt.Unlock()
-	if m, ok := clt.list[id]; ok {
-		delete(clt.list, id)
-		for c := range m {
-			delete(clt.info, c)
-			clt.hub.Kick(c)
-		}
-	}
+type Message struct {
+	Message string `json:"message"`
 }
 
 func main() {
@@ -83,7 +39,29 @@ func main() {
 		var ws = new WebSocket('ws://'+location.host+'/ws');
 		ws.onopen = function(e){console.info('opened', e);};
 		ws.onclose = function(e){console.info('closed', e);};
-		ws.onmessage = function(e){console.info('msg <--', e.data);};
+		ws.onmessage = function(e){
+			console.info('msg <--', e.data);
+
+			if (e.data instanceof Blob) {
+				var r1 = new FileReader;
+				r1.onload = function(){
+					console.log("as text", r1.result);
+				}
+				r1.readAsText(e.data);
+
+				var r2 = new FileReader;
+				r2.onload = function(){
+					console.log("as binary string", r2.result);
+				}
+				r2.readAsBinaryString(e.data);
+
+				var r3 = new FileReader;
+				r3.onload = function(){
+					console.log("as array buffer", r3.result);
+				}
+				r3.readAsArrayBuffer(e.data);
+			}
+		};
 
 		</script>
 		
@@ -91,5 +69,18 @@ func main() {
 	})
 
 	go hub.Run()
-	http.ListenAndServe(":8000", nil)
+	go http.ListenAndServe(":8000", nil)
+
+	reader := bufio.NewReader(os.Stdin)
+	for {
+
+		line, _, err := reader.ReadLine()
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		hub.Broadcast(Message{string(line)}, nil)
+		hub.Broadcast(string(line), nil)
+		hub.Broadcast(line, nil)
+	}
 }

@@ -12,7 +12,7 @@ func TestIsRunning(t *testing.T) {
 
 	wg.Add(3)
 
-	h := New(nil)
+	h := New()
 
 	go func() {
 		if h.IsRunning() {

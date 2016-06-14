@@ -3,7 +3,6 @@ package wshub
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"runtime"
 	"sync"
@@ -44,7 +43,7 @@ type Hub struct {
 	ShutdownObserver
 }
 
-func New(l *log.Logger) *Hub {
+func New() *Hub {
 	return &Hub{
 		RWMutex:          &sync.RWMutex{},
 		stack:            make([]Middleware, 0),

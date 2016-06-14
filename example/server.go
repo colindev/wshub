@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 
@@ -27,7 +26,7 @@ func (x *AccessMiddleware) Wrap(h websocket.Handler) websocket.Handler {
 
 func main() {
 
-	hub := wshub.New(log.New(os.Stdout, "wshub:", log.Lshortfile))
+	hub := wshub.New()
 
 	hub.MessageObserver = func(c *wshub.Client, msg string) {
 		fmt.Println(">>", c, msg)

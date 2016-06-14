@@ -16,6 +16,15 @@ type Message struct {
 	Message string `json:"message"`
 }
 
+type AccessMiddleware struct{}
+
+func (x *AccessMiddleware) Wrap(h websocket.Handler) websocket.Handler {
+	return func(c *websocket.Conn) {
+		fmt.Println(c.Request().Header)
+		h(c)
+	}
+}
+
 func main() {
 
 	hub := wshub.New(log.New(os.Stdout, "wshub:", log.Lshortfile))
@@ -25,11 +34,9 @@ func main() {
 		c.Send("echo:" + msg)
 	}
 
-	http.Handle("/ws", hub.Handler(func(conn *websocket.Conn) {
+	hub.Use(&AccessMiddleware{})
 
-		fmt.Println(">>", conn)
-
-	}))
+	http.Handle("/ws", hub)
 
 	http.HandleFunc("/client", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`

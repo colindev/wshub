@@ -31,6 +31,7 @@ var (
 type Hub struct {
 	*sync.RWMutex
 	running  bool
+	stack    []Middleware
 	list     map[*Client]bool
 	add      chan *Client
 	del      chan *Client
@@ -46,6 +47,7 @@ type Hub struct {
 func New(l *log.Logger) *Hub {
 	return &Hub{
 		RWMutex:          &sync.RWMutex{},
+		stack:            make([]Middleware, 0),
 		list:             make(map[*Client]bool),
 		add:              make(chan *Client),
 		del:              make(chan *Client),
@@ -53,6 +55,10 @@ func New(l *log.Logger) *Hub {
 		ErrorObserver:    defaultErrorHandler,
 		ShutdownObserver: defaultShutdownHandler,
 	}
+}
+
+func (h *Hub) Use(ms ...Middleware) {
+	h.stack = append(h.stack, ms...)
 }
 
 func (h *Hub) IsRunning() bool {
@@ -139,11 +145,9 @@ func (h *Hub) Shutdown() {
 	h.shutdown <- true
 }
 
-func (h *Hub) Handler(connHandler func(*websocket.Conn)) http.Handler {
+func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
-	return websocket.Handler(func(conn *websocket.Conn) {
-
-		connHandler(conn)
+	handler := func(conn *websocket.Conn) {
 
 		defer conn.Close()
 
@@ -196,5 +200,11 @@ func (h *Hub) Handler(connHandler func(*websocket.Conn)) http.Handler {
 			h.ClosedObserver(c)
 		}
 
-	})
+	}
+
+	for i := len(h.stack) - 1; i >= 0; i-- {
+		handler = h.stack[i].Wrap(handler)
+	}
+
+	websocket.Handler(handler).ServeHTTP(w, r)
 }

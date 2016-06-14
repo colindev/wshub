@@ -1,9 +1,11 @@
 package wshub
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"runtime"
 	"sync"
 
 	"golang.org/x/net/websocket"
@@ -12,22 +14,29 @@ import (
 type Validator func(*Client) error
 type ConnectedObserver func(*Client)
 type MessageObserver func(*Client, string)
+type ErrorObserver func(error)
 type ClosedObserver func(*Client)
 type ShutdownObserver func(*Hub)
 
-var defaultShutdownHandler ShutdownObserver = func(h *Hub) {
-	h.Println("Hub quite running...")
-}
+var (
+	defaultShutdownHandler ShutdownObserver = func(h *Hub) {
+		fmt.Println("Hub quite running...")
+	}
+	defaultErrorHandler ErrorObserver = func(e error) {
+		_, f, l, _ := runtime.Caller(1)
+		fmt.Printf("wshub.Hub: %s:%d %s", f, l, e)
+	}
+)
 
 type Hub struct {
 	*sync.RWMutex
-	*log.Logger
 	running  bool
 	list     map[*Client]bool
 	add      chan *Client
 	del      chan *Client
 	shutdown chan bool
 	Validator
+	ErrorObserver
 	ConnectedObserver
 	MessageObserver
 	ClosedObserver
@@ -37,11 +46,11 @@ type Hub struct {
 func New(l *log.Logger) *Hub {
 	return &Hub{
 		RWMutex:          &sync.RWMutex{},
-		Logger:           l,
 		list:             make(map[*Client]bool),
 		add:              make(chan *Client),
 		del:              make(chan *Client),
 		shutdown:         make(chan bool),
+		ErrorObserver:    defaultErrorHandler,
 		ShutdownObserver: defaultShutdownHandler,
 	}
 }
@@ -54,9 +63,12 @@ func (h *Hub) IsRunning() bool {
 }
 
 func (h *Hub) Run() {
+
 	if h.IsRunning() {
-		panic("already running")
+		h.ErrorObserver(errors.New("already running"))
+		return
 	}
+
 	h.Lock()
 	h.running = true
 	h.Unlock()
@@ -65,16 +77,13 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case c := <-h.del:
-			h.Println("try delete list[c]...")
 			delete(h.list, c)
 			c.Quite("del chan receive [c]")
 
 		case c := <-h.add:
-			h.Println("try set list[c] = true...")
 			h.list[c] = true
 
 		case <-h.shutdown:
-			h.Println("try shutdown...")
 			h.Lock()
 			h.running = false
 			h.Unlock()
@@ -104,20 +113,19 @@ func (h *Hub) Count() int {
 	return len(h.list)
 }
 
-func (h *Hub) Send(c *Client, data interface{}) {
-	select {
-	case c.msg <- data:
-	default:
-		h.Println("channel c.msg closed")
-	}
-}
-
-func (h *Hub) Broadcast(m string, f func(*Client, string) (string, error)) {
+func (h *Hub) Broadcast(m string, f func(*Client, string) (string, error)) int {
+	var n int
 	h.Each(func(c *Client) {
 		if mm, err := f(c, m); err == nil && mm != "" {
-			h.Send(c, mm)
+			if e := c.Send(mm); e == nil {
+				n++
+			} else {
+				h.ErrorObserver(e)
+			}
 		}
 	})
+
+	return n
 }
 
 func (h *Hub) Shutdown() {
@@ -130,17 +138,21 @@ func (h *Hub) Handler(connHandler func(*websocket.Conn)) http.Handler {
 
 		connHandler(conn)
 
-		h.Println("new ws connection")
-		defer h.Printf("quite websocket handler")
 		defer conn.Close()
 
 		if !h.IsRunning() {
+			h.ErrorObserver(errors.New("wshub is not running!!"))
 			return
 		}
 
 		// NOTE: 預設如果沒嵌入驗證方法就當允許連線
 		var verified bool = true
-		c := newClient(h, conn)
+		c, err := newClient(h, conn)
+		if err != nil {
+			h.ErrorObserver(err)
+			return
+		}
+
 		// 必須啟動 sender 才能真正調用 Send 方法
 		// 否則會堵住
 		go c.senderRun(func(data interface{}) (interface{}, error) {
@@ -151,21 +163,17 @@ func (h *Hub) Handler(connHandler func(*websocket.Conn)) http.Handler {
 		})
 
 		if h.Validator != nil {
-			h.Println("fire Validator...")
 			if err := h.Validator(c); err != nil {
-				h.Println("verified fail")
+				h.ErrorObserver(fmt.Errorf("verified fail: %s", err))
 				c.Quite("verified fail")
-				h.Println("send quite signal to client")
 				return
 			}
-			h.Println("verified success")
 			verified = true
 		}
 
 		h.add <- c
 
 		if h.ConnectedObserver != nil {
-			h.Println("fire ConnectedObserver...")
 			h.ConnectedObserver(c)
 		}
 
@@ -178,7 +186,6 @@ func (h *Hub) Handler(connHandler func(*websocket.Conn)) http.Handler {
 		h.del <- c
 
 		if h.ClosedObserver != nil {
-			h.Println("fire closedObserver...")
 			h.ClosedObserver(c)
 		}
 

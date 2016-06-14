@@ -1,10 +1,7 @@
-/*
-這是 client
-	...
-*/
 package wshub
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 
@@ -33,40 +30,37 @@ func (c *Client) Request() *http.Request {
 	return c.conn.Request()
 }
 
-func newClient(h *Hub, conn *websocket.Conn) *Client {
+func newClient(h *Hub, conn *websocket.Conn) (*Client, error) {
 	c := &Client{
 		hub:   h,
 		conn:  conn,
 		quite: make(chan string),
 		msg:   make(chan interface{}, 10),
 	}
-	c.msg <- ([]byte)(nil)
-	return c
+
+	if err := c.Send(([]byte)(nil)); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func (c *Client) receiverRun(f func(string)) {
-	defer c.hub.Println("quite receiver", c)
 	for {
 		select {
 		case <-c.quite:
-			c.hub.Println("receiver try quite sender")
 			c.Quite("receiver try quite sender")
 			return
 		default:
-			c.hub.Println("reader wait receive...")
 			var s string
 			err := websocket.Message.Receive(c.conn, &s)
-			c.hub.Printf("reader receive %+v, err=%#v\n", s, err)
 			if err == io.EOF {
 				// 客端關閉連線
-				c.hub.Println("client close conn")
 				c.Quite("client closed")
 				return
 			} else if err != nil {
 				// 解析有錯
-				c.hub.Println("receive error:", err)
+				c.hub.ErrorObserver(fmt.Errorf("wshub client: %s", err))
 			} else {
-				c.hub.Println("receive:", s)
 				f(s)
 			}
 		}
@@ -74,7 +68,6 @@ func (c *Client) receiverRun(f func(string)) {
 }
 
 func (c *Client) senderRun(f func(interface{}) (interface{}, error)) {
-	defer c.hub.Println("quite sender")
 	for {
 		select {
 		case m, ok := <-c.msg:
@@ -89,11 +82,11 @@ func (c *Client) senderRun(f func(interface{}) (interface{}, error)) {
 			switch m.(type) {
 			case string, []byte:
 				if err := websocket.Message.Send(c.conn, m); err != nil {
-					c.hub.Println("send string error:", err)
+					c.hub.ErrorObserver(fmt.Errorf("wshub client: %s", err))
 				}
 			default:
 				if err := websocket.JSON.Send(c.conn, m); err != nil {
-					c.hub.Println("send json error:", err)
+					c.hub.ErrorObserver(fmt.Errorf("wshub client: %s", err))
 				}
 			}
 
@@ -106,9 +99,16 @@ func (c *Client) senderRun(f func(interface{}) (interface{}, error)) {
 	}
 }
 
+func (c *Client) Send(data interface{}) error {
+	select {
+	case c.msg <- data:
+		return nil
+	default:
+		return fmt.Errorf("client closed: %+v", c.Request().Header)
+	}
+}
+
 func (c *Client) Quite(s string) {
-	c.hub.Printf("\033[31mquite <- [ %s ]\033[m\n", s)
-	defer c.hub.Printf("\033[32mquite <- [ %s ] done\033[m\n", s)
 	select {
 	case c.quite <- s:
 	default:

@@ -66,12 +66,12 @@ func main() {
 
 	hub.MessageObserver = func(c *wshub.Client, msg string) {
 		fmt.Println(">>", c, msg)
-		hub.Send(c, "echo:"+msg)
+		c.Send("echo:" + msg)
 	}
 
 	http.Handle("/ws", hub.Handler(func(conn *websocket.Conn) {
 
-		fmt.Println(conn)
+		fmt.Println(">>", conn)
 
 	}))
 

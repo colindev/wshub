@@ -26,10 +26,6 @@ type Client struct {
 	msg   chan interface{}
 }
 
-func (c *Client) Request() *http.Request {
-	return c.conn.Request()
-}
-
 func newClient(h *Hub, conn *websocket.Conn) (*Client, error) {
 	c := &Client{
 		hub:   h,
@@ -104,6 +100,10 @@ func (c *Client) senderRun(f func(interface{}) (interface{}, error)) {
 		default:
 		}
 	}
+}
+
+func (c *Client) Request() *http.Request {
+	return c.conn.Request()
 }
 
 func (c *Client) Send(data interface{}) error {

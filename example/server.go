@@ -7,9 +7,8 @@ import (
 	"net/http"
 	"os"
 
-	"golang.org/x/net/websocket"
-
 	"github.com/colindev/wshub"
+	"github.com/gorilla/websocket"
 )
 
 type Message struct {
@@ -18,10 +17,10 @@ type Message struct {
 
 type AccessMiddleware struct{}
 
-func (x *AccessMiddleware) Wrap(h websocket.Handler) websocket.Handler {
-	return func(c *websocket.Conn) {
-		fmt.Println(c.Request().Header)
-		h(c)
+func (x *AccessMiddleware) Wrap(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println(r.Header)
+		h(w, r)
 	}
 }
 
@@ -39,9 +38,10 @@ func main() {
 
 	hub := wshub.New()
 
-	hub.MessageObserver = func(c *wshub.Client, msg string) {
+	hub.MessageObserver = func(c *websocket.Conn, p []byte) {
+		msg := string(p)
+		c.WriteMessage(websocket.TextMessage, []byte("echo:"+msg))
 		fmt.Println(">>", c, msg)
-		c.Send("echo:" + msg)
 	}
 
 	hub.Use(&AccessMiddleware{})
@@ -96,8 +96,8 @@ func main() {
 			fmt.Println(err)
 			continue
 		}
-		hub.Broadcast(Message{string(line)}, nil)
-		hub.Broadcast(string(line), nil)
-		hub.Broadcast(line, nil)
+		hub.Broadcast(Message{string(line)})
+		hub.Broadcast(string(line))
+		hub.Broadcast(line)
 	}
 }

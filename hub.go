@@ -1,20 +1,18 @@
 package wshub
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
 	"sync"
 
-	"golang.org/x/net/websocket"
+	"github.com/gorilla/websocket"
 )
 
-type Validator func(*Client) error
-type ConnectedObserver func(*Client)
-type MessageObserver func(*Client, string)
+type MessageObserver func(*websocket.Conn, []byte)
 type ErrorObserver func(error)
-type ClosedObserver func(*Client)
 type ShutdownObserver func(*Hub)
 
 var (
@@ -28,32 +26,34 @@ var (
 )
 
 type Hub struct {
-	*sync.RWMutex
+	sync.RWMutex
 	running  bool
 	stack    []Middleware
-	list     map[*Client]bool
-	add      chan *Client
-	del      chan *Client
+	list     map[*websocket.Conn]bool
+	add      chan *websocket.Conn
+	del      chan *websocket.Conn
 	shutdown chan bool
-	Validator
 	ErrorObserver
-	ConnectedObserver
 	MessageObserver
-	ClosedObserver
 	ShutdownObserver
 }
 
 func New() *Hub {
-	return &Hub{
-		RWMutex:          &sync.RWMutex{},
+	hub := &Hub{
 		stack:            make([]Middleware, 0),
-		list:             make(map[*Client]bool),
-		add:              make(chan *Client),
-		del:              make(chan *Client),
-		shutdown:         make(chan bool),
+		list:             make(map[*websocket.Conn]bool),
+		add:              make(chan *websocket.Conn, 1),
+		del:              make(chan *websocket.Conn, 1),
+		shutdown:         make(chan bool, 1),
 		ErrorObserver:    defaultErrorHandler,
 		ShutdownObserver: defaultShutdownHandler,
 	}
+
+	hub.MessageObserver = func(_ *websocket.Conn, p []byte) {
+		hub.Broadcast(p)
+	}
+
+	return hub
 }
 
 func (h *Hub) Use(ms ...Middleware) {
@@ -89,8 +89,8 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case c := <-h.del:
+			c.WriteMessage(websocket.TextMessage, []byte("bye"))
 			delete(h.list, c)
-			c.Quite("del chan receive [c]")
 
 		case c := <-h.add:
 			h.list[c] = true
@@ -100,51 +100,64 @@ func (h *Hub) Run() {
 			h.running = false
 			h.Unlock()
 			for c := range h.list {
-				go func(cc *Client) {
-					cc.Quite("hub shutdown")
-				}(c)
+				c.Close()
 			}
 			return
-
-		default:
 		}
 	}
 }
 
-func (h *Hub) Kick(c *Client) {
+func (h *Hub) Kick(c *websocket.Conn) {
 	h.del <- c
 }
 
-func (h *Hub) Each(f func(*Client)) {
+func (h *Hub) Each(handler func(*websocket.Conn)) {
 	for c := range h.list {
-		f(c)
+		handler(c)
 	}
 }
 
 func (h *Hub) Count() int {
+	h.RLock()
+	defer h.RUnlock()
 	return len(h.list)
 }
 
-func (h *Hub) Broadcast(m interface{}, f func(*Client, interface{}) (interface{}, error)) int {
-	var n int
+func (h *Hub) Broadcast(m interface{}) (n int) {
+	var (
+		pm  *websocket.PreparedMessage
+		err error
+	)
+	h.RLock()
+	errObserver := h.ErrorObserver
+	h.RUnlock()
 
-	if f == nil {
-		f = func(c *Client, v interface{}) (interface{}, error) {
-			return v, nil
+	switch m := m.(type) {
+	case []byte:
+		pm, err = websocket.NewPreparedMessage(websocket.TextMessage, m)
+	case string:
+		pm, err = websocket.NewPreparedMessage(websocket.TextMessage, []byte(m))
+	default:
+		b, e := json.Marshal(m)
+		if e != nil {
+			err = e
+			break
 		}
+		pm, err = websocket.NewPreparedMessage(websocket.TextMessage, b)
 	}
 
-	h.Each(func(c *Client) {
-		if mm, err := f(c, m); err == nil {
-			if e := c.Send(mm); e == nil {
-				n++
-			} else {
-				h.ErrorObserver(e)
-			}
+	if err != nil {
+		errObserver(err)
+		return
+	}
+
+	h.Each(func(c *websocket.Conn) {
+		if err := c.WritePreparedMessage(pm); err != nil {
+			errObserver(err)
 		}
 	})
 
-	return n
+	return
 }
 
 func (h *Hub) Shutdown() {
@@ -153,63 +166,60 @@ func (h *Hub) Shutdown() {
 
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
-	handler := func(conn *websocket.Conn) {
+	if !h.isRunning() {
+		h.ErrorObserver(errors.New("wshub is not running"))
+		return
+	}
 
-		defer conn.Close()
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 4096,
+	}
 
-		if !h.isRunning() {
-			h.ErrorObserver(errors.New("wshub is not running"))
-			return
-		}
+	handler := func(w http.ResponseWriter, r *http.Request) {
 
-		// NOTE: 預設如果沒嵌入驗證方法就當允許連線
-		c, err := newClient(h, conn)
+		h.RLock()
+		errObserver := h.ErrorObserver
+		h.RUnlock()
+
+		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			h.ErrorObserver(err)
+			errObserver(err)
 			return
-		}
-
-		// 必須啟動 sender 才能真正調用 Send 方法
-		// 否則會堵住
-		go c.senderRun(func(data interface{}) (interface{}, error) {
-			if !c.isValid() {
-				return "", fmt.Errorf("unverified")
-			}
-			return data, nil
-		})
-
-		if h.Validator != nil {
-			if err := h.Validator(c); err != nil {
-				h.ErrorObserver(fmt.Errorf("verified fail: %s", err))
-				c.Quite("verified fail")
-				return
-			}
-			c.setValid(true)
 		}
 
 		h.add <- c
 
-		if h.ConnectedObserver != nil {
-			h.ConnectedObserver(c)
-		}
+		h.RLock()
+		msgObserver := h.MessageObserver
+		h.RUnlock()
 
-		c.receiverRun(func(s string) {
-			if h.MessageObserver != nil {
-				h.MessageObserver(c, s)
+		for {
+			msgType, p, err := c.ReadMessage()
+			if err != nil {
+				errObserver(err)
+				break
 			}
-		})
+			if msgType != websocket.TextMessage {
+				errObserver(fmt.Errorf("receive message type: %#v", msgType))
+				break
+			}
+
+			msgObserver(c, p)
+
+		}
 
 		h.del <- c
 
-		if h.ClosedObserver != nil {
-			h.ClosedObserver(c)
-		}
-
 	}
 
-	for i := len(h.stack) - 1; i >= 0; i-- {
-		handler = h.stack[i].Wrap(handler)
+	h.RLock()
+	stack := h.stack
+	h.RUnlock()
+
+	for i := len(stack) - 1; i >= 0; i-- {
+		handler = stack[i].Wrap(handler)
 	}
 
-	websocket.Handler(handler).ServeHTTP(w, r)
+	handler(w, r)
 }

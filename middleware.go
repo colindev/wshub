@@ -1,7 +1,7 @@
 package wshub
 
-import "golang.org/x/net/websocket"
+import "net/http"
 
 type Middleware interface {
-	Wrap(websocket.Handler) websocket.Handler
+	Wrap(http.HandlerFunc) http.HandlerFunc
 }

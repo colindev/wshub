@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	"flag"
-	"fmt"
+	"log"
 	"net/http"
 	"os"
 
@@ -19,7 +19,7 @@ type AccessMiddleware struct{}
 
 func (x *AccessMiddleware) Wrap(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println(r.Header)
+		log.Println(r.Header)
 		h(w, r)
 	}
 }
@@ -30,6 +30,8 @@ var (
 
 func init() {
 	flag.StringVar(&addr, "addr", ":8000", "http address")
+
+	log.SetFlags(log.Lshortfile)
 }
 
 func main() {
@@ -41,7 +43,7 @@ func main() {
 	hub.MessageObserver = func(c *websocket.Conn, p []byte) {
 		msg := string(p)
 		c.WriteMessage(websocket.TextMessage, []byte("echo:"+msg))
-		fmt.Println(">>", c, msg)
+		log.Println(">>", c, msg)
 	}
 
 	hub.Use(&AccessMiddleware{})
@@ -93,7 +95,7 @@ func main() {
 
 		line, _, err := reader.ReadLine()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			continue
 		}
 		hub.Broadcast(Message{string(line)})

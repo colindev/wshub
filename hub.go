@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"runtime"
 	"sync"
@@ -17,11 +18,11 @@ type ShutdownObserver func(*Hub)
 
 var (
 	defaultShutdownHandler ShutdownObserver = func(h *Hub) {
-		fmt.Println("Hub quite running...")
+		log.Println("Hub shutdown...")
 	}
 	defaultErrorHandler ErrorObserver = func(e error) {
 		_, f, l, _ := runtime.Caller(1)
-		fmt.Printf("wshub.Hub: %s:%d %s", f, l, e)
+		log.Printf("wshub.Hub: %s:%d %s\n", f, l, e)
 	}
 )
 

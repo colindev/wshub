@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"log"
 	"net/http"
@@ -19,7 +20,12 @@ type AccessMiddleware struct{}
 
 func (x *AccessMiddleware) Wrap(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Println(r.Header)
+		b, err := json.MarshalIndent(r.Header, "", "  ")
+		if err != nil {
+			log.Println(err)
+		} else {
+			log.Println(string(b))
+		}
 		h(w, r)
 	}
 }

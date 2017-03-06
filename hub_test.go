@@ -15,15 +15,15 @@ func TestIsRunning(t *testing.T) {
 	h := New()
 
 	go func() {
-		if h.IsRunning() {
+		if h.isRunning() {
 			t.Error("step 1 running MUST be false")
 		}
 	}()
 
 	time.Sleep(time.Nanosecond * 50)
-	h.running = true
+	h.setRunning(true)
 
-	if !h.IsRunning() {
+	if !h.isRunning() {
 		t.Error("step 2 running MUST be true")
 	}
 

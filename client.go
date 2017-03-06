@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"golang.org/x/net/websocket"
 )
@@ -18,12 +19,14 @@ func init() {
 	}
 }
 
-// struct 註解
+// Client connection
 type Client struct {
 	hub   *Hub
 	conn  *websocket.Conn
 	quite chan string
 	msg   chan interface{}
+	valid bool
+	sync.RWMutex
 }
 
 func newClient(h *Hub, conn *websocket.Conn) (*Client, error) {
@@ -32,12 +35,25 @@ func newClient(h *Hub, conn *websocket.Conn) (*Client, error) {
 		conn:  conn,
 		quite: make(chan string),
 		msg:   make(chan interface{}, 10),
+		valid: true,
 	}
 
 	if err := c.Send(([]byte)(nil)); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+func (c *Client) isValid() bool {
+	c.RLock()
+	defer c.RUnlock()
+	return c.valid
+}
+
+func (c *Client) setValid(t bool) {
+	c.Lock()
+	defer c.Unlock()
+	c.valid = t
 }
 
 func (c *Client) receiverRun(handler func(string)) {

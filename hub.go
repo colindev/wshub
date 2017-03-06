@@ -60,16 +60,23 @@ func (h *Hub) Use(ms ...Middleware) {
 	h.stack = append(h.stack, ms...)
 }
 
-func (h *Hub) IsRunning() bool {
+func (h *Hub) isRunning() bool {
 	h.RLock()
 	defer h.RUnlock()
 
 	return h.running
 }
 
+func (h *Hub) setRunning(t bool) {
+	h.Lock()
+	defer h.Unlock()
+
+	h.running = t
+}
+
 func (h *Hub) Run() {
 
-	if h.IsRunning() {
+	if h.isRunning() {
 		h.ErrorObserver(errors.New("already running"))
 		return
 	}
@@ -150,13 +157,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		defer conn.Close()
 
-		if !h.IsRunning() {
-			h.ErrorObserver(errors.New("wshub is not running!!"))
+		if !h.isRunning() {
+			h.ErrorObserver(errors.New("wshub is not running"))
 			return
 		}
 
 		// NOTE: 預設如果沒嵌入驗證方法就當允許連線
-		var verified bool = true
 		c, err := newClient(h, conn)
 		if err != nil {
 			h.ErrorObserver(err)
@@ -166,7 +172,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 必須啟動 sender 才能真正調用 Send 方法
 		// 否則會堵住
 		go c.senderRun(func(data interface{}) (interface{}, error) {
-			if !verified {
+			if !c.isValid() {
 				return "", fmt.Errorf("unverified")
 			}
 			return data, nil
@@ -178,7 +184,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				c.Quite("verified fail")
 				return
 			}
-			verified = true
+			c.setValid(true)
 		}
 
 		h.add <- c

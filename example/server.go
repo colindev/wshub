@@ -97,9 +97,12 @@ func main() {
 		if err != nil {
 			log.Println(err)
 			continue
+		} else if len(line) == 0 {
+			continue
 		}
-		hub.Broadcast(Message{string(line)})
-		hub.Broadcast(string(line))
-		hub.Broadcast(line)
+
+		hub.Broadcast(Message{"struct:" + string(line)})
+		hub.Broadcast("string:" + string(line))
+		hub.Broadcast(append([]byte("byte:"), line...))
 	}
 }

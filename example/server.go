@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,7 +25,17 @@ func (x *AccessMiddleware) Wrap(h websocket.Handler) websocket.Handler {
 	}
 }
 
+var (
+	addr string
+)
+
+func init() {
+	flag.StringVar(&addr, "addr", ":8000", "http address")
+}
+
 func main() {
+
+	flag.Parse()
 
 	hub := wshub.New()
 
@@ -37,7 +48,7 @@ func main() {
 
 	http.Handle("/ws", hub)
 
-	http.HandleFunc("/client", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`
 		
 		<script>
@@ -75,7 +86,7 @@ func main() {
 	})
 
 	go hub.Run()
-	go http.ListenAndServe(":8000", nil)
+	go http.ListenAndServe(addr, nil)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {

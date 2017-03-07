@@ -92,6 +92,7 @@ func (h *Hub) Run() {
 		case c := <-h.del:
 			c.WriteMessage(websocket.TextMessage, []byte("bye"))
 			delete(h.list, c)
+			c.Close()
 
 		case c := <-h.add:
 			h.list[c] = true

@@ -54,7 +54,7 @@ func main() {
 
 	hub.Use(&AccessMiddleware{})
 
-	http.Handle("/ws", hub)
+	http.Handle("/ws", hub.Handler())
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`

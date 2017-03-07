@@ -165,12 +165,7 @@ func (h *Hub) Shutdown() {
 	h.shutdown <- true
 }
 
-func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-
-	if !h.isRunning() {
-		h.ErrorObserver(errors.New("wshub is not running"))
-		return
-	}
+func (h *Hub) Handler() http.Handler {
 
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -182,6 +177,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.RLock()
 		errObserver := h.ErrorObserver
 		h.RUnlock()
+
+		if !h.isRunning() {
+			errObserver(errors.New("wshub is not running"))
+			return
+		}
 
 		c, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -222,5 +222,5 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		handler = stack[i].Wrap(handler)
 	}
 
-	handler(w, r)
+	return http.HandlerFunc(handler)
 }
